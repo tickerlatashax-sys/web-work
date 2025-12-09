@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Admin Panel</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body{font-family:Inter,Arial,Helvetica,sans-serif;max-width:1000px;margin:18px auto;padding:16px}
+    header{display:flex;justify-content:space-between;align-items:center}
+    h1{margin:0;font-size:20px}
+    .card{border:1px solid #e3e3e3;border-radius:8px;padding:12px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,0.04)}
+    .row{display:flex;gap:8px;align-items:center}
+    label{font-weight:600}
+    input[type="text"], input[type="password"], input[type="date"], input[type="number"]{padding:6px;border-radius:6px;border:1px solid #ccc;width:100%;}
+    button{padding:8px 10px;border-radius:6px;border:none;background:#2563eb;color:#fff;cursor:pointer}
+    button.ghost{background:#fff;color:#333;border:1px solid #ccc}
+    button.danger{background:#dc2626}
+    .small{font-size:13px;color:#555}
+    .actions{display:flex;gap:6px}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:8px;border-bottom:1px solid #f0f0f0;text-align:left}
+    .muted{color:#666;font-size:13px}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Admin Dashboard</h1>
+    <div>
+      <button id="logoutBtn" class="ghost">Logout</button>
+    </div>
+  </header>
+
+  <section class="card">
+    <h3>Create User</h3>
+    <div class="row" style="gap:12px;flex-wrap:wrap">
+      <div style="flex:1;min-width:180px">
+        <label>UserID</label><br><input id="userid" type="text" />
+      </div>
+      <div style="flex:1;min-width:180px">
+        <label>Password</label><br><input id="password" type="password" />
+      </div>
+      <div style="flex:1;min-width:180px">
+        <label>Full name</label><br><input id="fullname" type="text" />
+      </div>
+      <div style="min-width:120px">
+        <label>Admin</label><br><input id="isAdmin" type="checkbox" />
+      </div>
+      <div style="min-width:140px">
+        <label>&nbsp;</label><br>
+        <button id="createBtn">Create</button>
+      </div>
+    </div>
+    <div id="createStatus" class="small muted" style="margin-top:8px"></div>
+  </section>
+
+  <section class="card">
+    <h3>Users</h3>
+    <div id="users"></div>
+  </section>
+
+  <section class="card">
+    <h3>User Daily Records</h3>
+    <div id="daily"></div>
+  </section>
+
+  <section class="card">
+    <h3>Logs</h3>
+    <div id="logs"></div>
+  </section>
+
+<script>
+/* admin.html — robust listeners + logging */
+const API = "http://localhost:8000";
+const token = localStorage.getItem("token");
+if (!token || localStorage.getItem("is_admin") !== "true") {
+  console.warn("Not logged in as admin — redirecting to login");
+  location = "login.html";
+}
+const authHeader = { "Authorization": "Bearer " + token };
+
+document.getElementById('logoutBtn').addEventListener('click', () => {
+  localStorage.clear();
+  location = "login.html";
+});
+document.getElementById('createBtn').addEventListener('click', createUser);
+
+async function createUser(){
+  const body = {
+    userid: document.getElementById("userid").value.trim(),
+    password: document.getElementById("password").value,
+    full_name: document.getElementById("fullname").value.trim(),
+    is_admin: document.getElementById("isAdmin").checked
+  };
+  document.getElementById("createStatus").textContent = "Creating...";
+  try {
+    const res = await fetch(API + "/admin/users", {
+      method: "POST",
+      headers: {"Content-Type":"application/json", ...authHeader},
+      body: JSON.stringify(body)
+    });
+    const j = await res.json();
+    if(!res.ok){ document.getElementById("createStatus").textContent = j.detail || "Create failed"; return; }
+    document.getElementById("createStatus").textContent = "Created user " + j.userid;
+    document.getElementById("userid").value = "";
+    document.getElementById("password").value = "";
+    document.getElementById("fullname").value = "";
+    document.getElementById("isAdmin").checked = false;
+    await loadUsers();
+  } catch (e) {
+    console.error("createUser error", e);
+    document.getElementById("createStatus").textContent = "Network error";
+  }
+}
+
+async function loadUsers(){
+  console.log("loadUsers() start");
+  const res = await fetch(API + "/admin/users", { headers: authHeader });
+  if (!res.ok) { document.getElementById("users").innerText = "Failed to load users"; return; }
+  const users = await res.json();
+  const out = document.getElementById("users");
+  if (!users.length) { out.innerHTML = "<div class='small muted'>No users</div>"; return; }
+
+  let html = "<table><thead><tr><th>userid</th><th>full name</th><th>role</th><th>status</th><th>actions</th></tr></thead><tbody>";
+  for (const u of users){
+    const safeFull = u.full_name ? u.full_name.replace(/</g,'&lt;') : '';
+    html += `<tr>
+      <td>${u.userid}</td>
+      <td>${safeFull}</td>
+      <td>${u.is_admin ? 'Admin' : 'User'}</td>
+      <td>${u.is_active ? 'Active' : 'Deactivated'}</td>
+      <td class="actions">
+        <button class="view-daily-btn ghost" data-user="${encodeURIComponent(u.userid)}">View Daily</button>
+        ${u.is_active ? `<button class="deactivate-btn ghost" data-user="${encodeURIComponent(u.userid)}">Deactivate</button>`
+                     : `<button class="restore-user-btn ghost" data-user="${encodeURIComponent(u.userid)}">Restore</button>`}
+        <button class="delete-user-btn danger" data-user="${encodeURIComponent(u.userid)}">Delete</button>
+      </td>
+    </tr>`;
+  }
+  html += "</tbody></table>";
+  out.innerHTML = html;
+
+  // attach listeners to view buttons (explicit)
+  document.querySelectorAll('.view-daily-btn').forEach(b=>{
+    b.removeEventListener('click', viewDailyClick);
+    b.addEventListener('click', viewDailyClick);
+  });
+  document.querySelectorAll('.deactivate-btn').forEach(b=>{
+    b.removeEventListener('click', deactivateUserClick);
+    b.addEventListener('click', deactivateUserClick);
+  });
+  document.querySelectorAll('.restore-user-btn').forEach(b=>{
+    b.removeEventListener('click', restoreUserClick);
+    b.addEventListener('click', restoreUserClick);
+  });
+  document.querySelectorAll('.delete-user-btn').forEach(b=>{
+    b.removeEventListener('click', deleteUserClick);
+    b.addEventListener('click', deleteUserClick);
+  });
+
+  console.log("loadUsers() done");
+  loadLogs();
+}
+
+function viewDailyClick(e){
+  const btn = e.currentTarget;
+  const userid = decodeURIComponent(btn.getAttribute('data-user'));
+  loadDaily(userid);
+}
+
+function deactivateUserClick(e){
+  const userid = decodeURIComponent(e.currentTarget.getAttribute('data-user'));
+  if(!confirm(`Deactivate user ${userid}?`)) return;
+  fetch(API + "/admin/user/" + encodeURIComponent(userid) + "/deactivate", { method: "POST", headers: authHeader })
+    .then(r=> r.json().then(j=> ({ok:r.ok, body:j})))
+    .then(res=>{
+      if(!res.ok){ alert(res.body.detail || "Failed"); return; }
+      alert("Deactivated");
+      loadUsers();
+    }).catch(e=>{ alert("Network error"); console.error(e); });
+}
+
+function restoreUserClick(e){
+  const userid = decodeURIComponent(e.currentTarget.getAttribute('data-user'));
+  fetch(API + "/admin/user/" + encodeURIComponent(userid) + "/restore", { method: "POST", headers: authHeader })
+    .then(r=> r.json().then(j=> ({ok:r.ok, body:j})))
+    .then(res=>{
+      if(!res.ok){ alert(res.body.detail || "Failed"); return; }
+      alert("Restored");
+      loadUsers();
+    }).catch(e=>{ alert("Network error"); console.error(e); });
+}
+
+function deleteUserClick(e){
+  const userid = decodeURIComponent(e.currentTarget.getAttribute('data-user'));
+  if(!confirm(`Permanently delete user ${userid}? This is irreversible.`)) return;
+  fetch(API + "/admin/user/" + encodeURIComponent(userid), { method: "DELETE", headers: authHeader })
+    .then(r=> r.json().then(j=> ({ok:r.ok, body:j})))
+    .then(res=>{
+      if(!res.ok){ alert(res.body.detail || "Failed"); return; }
+      alert("Deleted permanently");
+      loadUsers();
+    }).catch(e=>{ alert("Network error"); console.error(e); });
+}
+
+async function loadDaily(userid){
+  console.log("loadDaily()", userid);
+  localStorage.setItem("userid", userid);
+  const res = await fetch(API + "/admin/user/" + encodeURIComponent(userid) + "/daily", { headers: authHeader });
+  const out = document.getElementById("daily");
+  if (!res.ok) {
+    const text = await res.text();
+    out.innerHTML = `<div class="small muted">Failed to load daily for ${userid}: ${res.status}</div>`;
+    console.error("loadDaily error", res.status, text);
+    return;
+  }
+  const daily = await res.json();
+  if (!daily.length){ out.innerHTML = `<div class="small muted">No records for ${userid}</div>`; return; }
+
+  let html = `<h4>${userid} — records</h4><table><thead><tr><th>Date</th><th>Deposit</th><th>Withdraw</th><th>Actions</th></tr></thead><tbody>`;
+  for (const r of daily){
+    const deleted = r.is_deleted === true;
+    html += `<tr id="daily-${r.id}" ${deleted ? 'style="opacity:0.6"' : ''}>
+      <td>${r.date}</td>
+      <td>${r.total_deposit}</td>
+      <td>${r.total_withdraw}</td>
+      <td>
+        ${!deleted ? `<button class="edit-daily ghost" data-id="${r.id}" data-date="${r.date}" data-dep="${r.total_deposit}" data-wit="${r.total_withdraw}">Edit</button>` : ''}
+        ${!deleted ? `<button class="delete-daily danger" data-id="${r.id}">Delete</button>` : `<button class="restore-daily ghost" data-id="${r.id}">Restore</button>`}
+      </td>
+    </tr>`;
+  }
+  html += "</tbody></table>";
+  out.innerHTML = html;
+
+  // attach handlers for edit/delete/restore
+  document.querySelectorAll('.edit-daily').forEach(btn=>{
+    btn.removeEventListener('click', editDailyClick);
+    btn.addEventListener('click', editDailyClick);
+  });
+  document.querySelectorAll('.delete-daily').forEach(btn=>{
+    btn.removeEventListener('click', deleteDailyClick);
+    btn.addEventListener('click', deleteDailyClick);
+  });
+  document.querySelectorAll('.restore-daily').forEach(btn=>{
+    btn.removeEventListener('click', restoreDailyClick);
+    btn.addEventListener('click', restoreDailyClick);
+  });
+}
+
+function editDailyClick(e){
+  const btn = e.currentTarget;
+  const id = btn.dataset.id, date = btn.dataset.date, oldDep = btn.dataset.dep, oldWit = btn.dataset.wit;
+  adminEdit(id, date, oldDep, oldWit);
+}
+
+function deleteDailyClick(e){
+  const id = e.currentTarget.dataset.id;
+  adminDelete(id);
+}
+
+function restoreDailyClick(e){
+  const id = e.currentTarget.dataset.id;
+  adminRestore(id);
+}
+
+async function adminEdit(id, date, oldDep, oldWit){
+  const newDep = prompt("Deposit for " + date, oldDep);
+  if (newDep === null) return;
+  const newWit = prompt("Withdraw for " + date, oldWit);
+  if (newWit === null) return;
+  const payload = { date: date, total_deposit: Number(newDep), total_withdraw: Number(newWit) };
+  const res = await fetch(API + "/admin/daily/" + id, {
+    method: "PUT",
+    headers: {"Content-Type":"application/json", ...authHeader},
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok){ const j = await res.json(); alert(j.detail || "Update failed"); return; }
+  alert("Updated");
+  const userid = localStorage.getItem("userid"); if (userid) loadDaily(userid);
+}
+
+async function adminDelete(id){
+  if (!confirm("Soft-delete this record?")) return;
+  const res = await fetch(API + "/admin/daily/" + id, { method: "DELETE", headers: authHeader });
+  if (!res.ok){ const j = await res.json(); alert(j.detail || "Delete failed"); return; }
+  alert("Deleted");
+  const userid = localStorage.getItem("userid"); if (userid) loadDaily(userid);
+}
+
+async function adminRestore(id){
+  const res = await fetch(API + "/admin/daily/" + id + "/restore", { method: "POST", headers: authHeader });
+  if (!res.ok){ const j = await res.json(); alert(j.detail || "Restore failed"); return; }
+  alert("Restored");
+  const userid = localStorage.getItem("userid"); if (userid) loadDaily(userid);
+}
+
+async function loadLogs(){
+  const res = await fetch(API + "/admin/logs", { headers: authHeader });
+  if (!res.ok){ document.getElementById("logs").innerText = "Failed to load logs"; return; }
+  const logs = await res.json();
+  const out = document.getElementById("logs");
+  if (!logs.length){ out.innerHTML = "<div class='small muted'>No logs</div>"; return; }
+  let html = "<div class='small muted' style='margin-bottom:8px'>Latest actions</div><div>";
+  for (const l of logs.slice(0,100)){
+    html += `<div class="small">${new Date(l.created_at).toLocaleString()} — ${l.action} — ${JSON.stringify(l.details)}</div>`;
+  }
+  html += "</div>";
+  out.innerHTML = html;
+}
+
+// initial load
+loadUsers();
+</script>
+</body>
+</html>

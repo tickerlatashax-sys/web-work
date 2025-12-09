@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Login</title>
+  <style>body{font-family:Arial;padding:20px}</style>
+</head>
+<body>
+  <h2>Login</h2>
+  <label>UserID:</label><br>
+  <input id="userid"><br><br>
+  <label>Password:</label><br>
+  <input id="password" type="password"><br><br>
+  <button id="loginBtn">Login</button>
+
+  <script>
+    const API = "http://localhost:8000";
+
+    document.getElementById('loginBtn').addEventListener('click', login);
+
+    async function login(){
+      const userid = document.getElementById('userid').value;
+      const password = document.getElementById('password').value;
+      const res = await fetch(API + "/auth/login", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ userid, password })
+      });
+      const data = await res.json();
+      if(!res.ok){ alert(data.detail || 'Login failed'); return; }
+      localStorage.setItem("token", data.access_token);
+      localStorage.setItem("userid", userid);
+      // probe admin
+      try {
+        const s = await fetch(API + "/admin/users", { headers: { Authorization: "Bearer " + data.access_token }});
+        if(s.ok){ localStorage.setItem("is_admin", "true"); window.location = "admin.html"; return; }
+      } catch(e){}
+      localStorage.setItem("is_admin", "false");
+      window.location = "user.html";
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>User Dashboard</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body{font-family:Inter,Arial,Helvetica,sans-serif;max-width:900px;margin:18px auto;padding:16px}
+    header{display:flex;justify-content:space-between;align-items:center}
+    .card{border:1px solid #e3e3e3;border-radius:8px;padding:12px;margin-bottom:12px}
+    input, button{padding:8px;border-radius:6px;border:1px solid #ccc}
+    button{background:#2563eb;color:#fff;border:none}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:8px;border-bottom:1px solid #f0f0f0;text-align:left}
+    .small{font-size:13px;color:#666}
+  </style>
+</head>
+<body>
+  <header>
+    <h2>User Dashboard</h2>
+    <div>
+      <span id="loggedAs" class="small"></span>
+      <button id="logoutBtn">Logout</button>
+    </div>
+  </header>
+
+  <section class="card">
+    <h3>Submit Today's Totals</h3>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <input id="date" type="date" style="min-width:140px" />
+      <input id="deposit" type="number" placeholder="Total deposit" />
+      <input id="withdraw" type="number" placeholder="Total withdraw" />
+      <button id="submitBtn">Submit</button>
+    </div>
+    <div id="submitMsg" class="small"></div>
+  </section>
+
+  <section class="card">
+    <h3>Your History</h3>
+    <div id="history"></div>
+  </section>
+
+<script>
+const API = "http://localhost:8000";
+const token = localStorage.getItem("token");
+const userid = localStorage.getItem("userid") || "";
+console.log("user.html start, token present?", !!token, "userid:", userid);
+if (!token){ location = "login.html"; }
+const authHeader = { "Authorization": "Bearer " + token };
+
+document.getElementById("logoutBtn").addEventListener('click', ()=>{ localStorage.clear(); location="login.html"; });
+document.getElementById("submitBtn").addEventListener('click', submitDaily);
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById("loggedAs").textContent = userid ? `Logged in as: ${userid}` : "";
+  const d = new Date();
+  document.getElementById("date").value = d.toISOString().slice(0,10);
+  loadMyHistory();
+});
+
+async function submitDaily(){
+  const date = document.getElementById("date").value;
+  const dep = Number(document.getElementById("deposit").value || 0);
+  const wit = Number(document.getElementById("withdraw").value || 0);
+  if (!date){ alert("Choose a date"); return; }
+  const payload = { date: date, total_deposit: dep, total_withdraw: wit };
+  try {
+    const res = await fetch(API + "/user/daily", {
+      method: "POST",
+      headers: {"Content-Type":"application/json", ...authHeader},
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok){ const j = await res.json(); document.getElementById("submitMsg").textContent = j.detail || "Submit failed"; return; }
+    document.getElementById("submitMsg").textContent = "Saved";
+    setTimeout(()=> document.getElementById("submitMsg").textContent = "", 2000);
+    loadMyHistory();
+  } catch(e){
+    console.error("submitDaily error", e);
+    document.getElementById("submitMsg").textContent = "Network error";
+  }
+}
+
+async function loadMyHistory(){
+  console.log("loadMyHistory for", userid);
+  const res = await fetch(API + "/user/daily", { headers: authHeader });
+  const container = document.getElementById("history");
+  if (!res.ok){ container.innerHTML = "<div class='small'>Failed to load</div>"; return; }
+  const rows = await res.json();
+  if (!rows.length){ container.innerHTML = "<div class='small'>No history</div>"; return; }
+  let html = "<table><thead><tr><th>Date</th><th>Deposit</th><th>Withdraw</th></tr></thead><tbody>";
+  for (const r of rows){
+    // backend already filters deleted rows; still protect UI
+    html += `<tr><td>${r.date}</td><td>${r.total_deposit}</td><td>${r.total_withdraw}</td></tr>`;
+  }
+  html += "</tbody></table>";
+  container.innerHTML = html;
+}
+</script>
+</body>
+</html>
